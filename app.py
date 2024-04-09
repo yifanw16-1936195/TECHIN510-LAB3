@@ -1,5 +1,6 @@
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import datetime
 
 import streamlit as st
 import psycopg2
@@ -8,24 +9,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Initialize database connection
 con = psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
 cur = con.cursor()
-
-# Create table if it doesn't exist
-cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS prompts (
-        id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        is_favorite BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """
-)
-con.commit()
 
 @dataclass
 class Prompt:
@@ -39,7 +24,7 @@ def prompt_form(prompt=Prompt("", "", False)):
         prompt_text = st.text_area("Prompt", height=200, value=prompt.prompt)
         is_favorite = st.checkbox("Favorite", value=prompt.is_favorite)
         submitted = st.form_submit_button("Submit")
-        if submitted and title and prompt_text:  # Ensure fields are filled
+        if submitted and title and prompt_text:  
             return Prompt(title, prompt_text, is_favorite)
         elif submitted:
             st.error("Both title and prompt must be filled.")
@@ -47,28 +32,46 @@ def prompt_form(prompt=Prompt("", "", False)):
 st.title("Promptbase")
 st.subheader("A simple app to store and retrieve prompts")
 
-# Form for new or updated prompts
-prompt = prompt_form()
-if prompt:
-    cur.execute("INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s)", 
-                (prompt.title, prompt.prompt, prompt.is_favorite))
-    con.commit()
-    st.success("Prompt added successfully!")
-    st.experimental_rerun()
+# Filtering and sorting options
+date_filter = st.selectbox(
+    'Filter by date',
+    ('All Time', 'Today', 'This Week', 'This Month', 'This Year')
+)
 
-# Search bar
-search_query = st.text_input("Search prompts")
-if search_query:
-    cur.execute("SELECT * FROM prompts WHERE title ILIKE %s OR prompt ILIKE %s ORDER BY created_at DESC", 
-                ('%' + search_query + '%', '%' + search_query + '%'))
+if date_filter == 'Today':
+    start_date = datetime.date.today()
+elif date_filter == 'This Week':
+    start_date = datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday())
+elif date_filter == 'This Month':
+    start_date = datetime.date.today().replace(day=1)
+elif date_filter == 'This Year':
+    start_date = datetime.date.today().replace(month=1, day=1)
 else:
-    cur.execute("SELECT * FROM prompts ORDER BY created_at DESC")
+    start_date = None
+
+filter_favorite = st.checkbox('Show only favorites')
+
+# Applying the filter and sort query
+if start_date:
+    cur.execute("""
+        SELECT * FROM prompts 
+        WHERE created_at >= %s
+        AND (%s OR is_favorite = true)
+        ORDER BY created_at DESC""", 
+        (start_date, not filter_favorite))
+else:
+    cur.execute("""
+        SELECT * FROM prompts 
+        WHERE %s OR is_favorite = true
+        ORDER BY created_at DESC""", 
+        (not filter_favorite,))
 
 prompts = cur.fetchall()
 
-# Display prompts
+# Displaying prompts with improved favorite visibility
 for p in prompts:
-    with st.expander(f"{p['title']} (created on {p['created_at'].date()})"):
+    favorite_status = "❤️" if p['is_favorite'] else "🖤"
+    with st.expander(f"{favorite_status} {p['title']} (created on {p['created_at'].date()})"):
         st.code(p['prompt'])
         if st.button("Toggle Favorite", key=f"fav-{p['id']}"):
             cur.execute("UPDATE prompts SET is_favorite = NOT is_favorite WHERE id = %s", (p['id'],))
@@ -78,3 +81,11 @@ for p in prompts:
             cur.execute("DELETE FROM prompts WHERE id = %s", (p['id'],))
             con.commit()
             st.experimental_rerun()
+
+prompt = prompt_form()
+if prompt:
+    cur.execute("INSERT INTO prompts (title, prompt, is_favorite) VALUES (%s, %s, %s)", 
+                (prompt.title, prompt.prompt, prompt.is_favorite))
+    con.commit()
+    st.success("Prompt added successfully!")
+    st.experimental_rerun()
