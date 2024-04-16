@@ -4,7 +4,7 @@
 
 ## Hosted Link
 
-[Promptbase](https://techin510-lab3-yifanwang.streamlit.app/)
+[Promptbase](https://techin510-lab-3-yifanwang.streamlit.app/)
 
 ## Overview
 
